@@ -3,7 +3,7 @@ import type { NextRequest } from 'next/server';
 import { getToken } from 'next-auth/jwt';
 
 export async function middleware(request: NextRequest) {
-    const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET || 'development-secret-key-at-least-32-characters-long' });
+    const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET });
     const isAuthPage = request.nextUrl.pathname.startsWith('/login') || request.nextUrl.pathname.startsWith('/register');
     const isGovernmentPage = request.nextUrl.pathname.startsWith('/government');
 

@@ -6,7 +6,7 @@ import bcrypt from 'bcryptjs';
 import prisma from '@/lib/prisma';
 
 export const authOptions: NextAuthOptions = {
-    adapter: PrismaAdapter(prisma),
+    adapter: PrismaAdapter(prisma) as any,
     providers: [
         CredentialsProvider({
             name: 'Credentials',
@@ -49,8 +49,8 @@ export const authOptions: NextAuthOptions = {
             },
         }),
         GoogleProvider({
-            clientId: process.env.GOOGLE_CLIENT_ID || '',
-            clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
+            clientId: process.env.GOOGLE_CLIENT_ID!,
+            clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
             authorization: {
                 params: {
                     prompt: 'consent',
@@ -60,6 +60,10 @@ export const authOptions: NextAuthOptions = {
             },
         }),
     ],
+    // Use JWT strategy — but we MUST NOT use PrismaAdapter with JWT for OAuth
+    // The adapter handles Account/Session creation; JWT handles the token.
+    // This combo works when session strategy is 'database' OR when adapter is omitted.
+    // Fix: keep adapter for Account linking but use JWT for session tokens.
     session: {
         strategy: 'jwt',
     },
@@ -67,36 +71,65 @@ export const authOptions: NextAuthOptions = {
         signIn: '/login',
     },
     callbacks: {
-        async signIn({ user, account }) {
-            // For OAuth sign-ins, ensure user has a role
+        async signIn({ user, account, profile }) {
+            // For Google OAuth sign-ins, ensure the user record has a role set
             if (account?.provider === 'google') {
-                const existingUser = await prisma.user.findUnique({
-                    where: { email: user.email! },
-                });
-                if (existingUser && !existingUser.role) {
-                    await prisma.user.update({
-                        where: { id: existingUser.id },
-                        data: { role: 'FARMER' },
+                try {
+                    const existingUser = await prisma.user.findUnique({
+                        where: { email: user.email! },
                     });
+                    if (existingUser && !existingUser.role) {
+                        await prisma.user.update({
+                            where: { id: existingUser.id },
+                            data: { role: 'FARMER' },
+                        });
+                    }
+                } catch (error) {
+                    console.error('Error in signIn callback:', error);
+                    // Don't block sign-in for role update failures
                 }
             }
             return true;
         },
-        async jwt({ token, user }) {
+        async jwt({ token, user, account }) {
+            // On initial sign-in, user object is present
             if (user) {
                 token.id = user.id;
                 token.role = (user as any).role || 'FARMER';
             }
-            // Always fetch latest role from DB
-            if (token.id && !user) {
-                const dbUser = await prisma.user.findUnique({
-                    where: { id: token.id as string },
-                    select: { role: true },
-                });
-                if (dbUser) {
-                    token.role = dbUser.role;
+
+            // On Google OAuth, user.id might be undefined (adapter assigns id)
+            // Fetch from DB using email as fallback
+            if (account?.provider === 'google' && token.email && !token.id) {
+                try {
+                    const dbUser = await prisma.user.findUnique({
+                        where: { email: token.email as string },
+                        select: { id: true, role: true },
+                    });
+                    if (dbUser) {
+                        token.id = dbUser.id;
+                        token.role = dbUser.role;
+                    }
+                } catch (error) {
+                    console.error('Error fetching user in jwt callback:', error);
                 }
             }
+
+            // On subsequent requests, refresh role from DB if we have an id
+            if (token.id && !user && !account) {
+                try {
+                    const dbUser = await prisma.user.findUnique({
+                        where: { id: token.id as string },
+                        select: { role: true },
+                    });
+                    if (dbUser) {
+                        token.role = dbUser.role;
+                    }
+                } catch (error) {
+                    console.error('Error refreshing role in jwt callback:', error);
+                }
+            }
+
             return token;
         },
         async session({ session, token }) {
@@ -107,7 +140,7 @@ export const authOptions: NextAuthOptions = {
             return session;
         },
     },
-    secret: process.env.NEXTAUTH_SECRET || 'development-secret-key-at-least-32-characters-long',
+    secret: process.env.NEXTAUTH_SECRET,
 };
 
 // Register User function moved to @/lib/auth/registerUser

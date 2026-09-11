@@ -1,8 +1,16 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { ChatMessage, FarmContext } from '@/types';
 import { useFarm } from '@/contexts/FarmContext';
+
+// Web Speech API type declarations
+declare global {
+    interface Window {
+        SpeechRecognition: any;
+        webkitSpeechRecognition: any;
+    }
+}
 
 export default function KrishiSahayak() {
     const { selectedFarm } = useFarm();
@@ -10,7 +18,7 @@ export default function KrishiSahayak() {
         {
             id: '1',
             role: 'assistant',
-            content: '🙏 Namaste! I am Krishi Sahayak (कृषि सहायक), your AI farming assistant. How can I help you today with your crops?',
+            content: '🙏 Namaste! Main hoon Krishi Sahayak (कृषि सहायक), aapka AI farming assistant. Aap mujhse koi bhi sawaal pooch sakte hain — type karke ya 🎤 mic button se baat karke!',
             timestamp: new Date()
         }
     ]);
@@ -20,11 +28,145 @@ export default function KrishiSahayak() {
     const [sessionId] = useState(() => `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
+    // ─── Voice States ─────────────────────────────────────────
+    const [isListening, setIsListening] = useState(false);
+    const [isSpeaking, setIsSpeaking] = useState(false);
+    const [voiceSupported, setVoiceSupported] = useState(false);
+    const [speechSupported, setSpeechSupported] = useState(false);
+    const recognitionRef = useRef<any>(null);
+    const synthRef = useRef<SpeechSynthesis | null>(null);
+    const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+
+    // Initialize Voice APIs
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            // Check SpeechRecognition support
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (SpeechRecognition) {
+                setVoiceSupported(true);
+                const recognition = new SpeechRecognition();
+                recognition.continuous = false;
+                recognition.interimResults = true;
+                recognition.lang = 'hi-IN'; // Hindi + English mixed
+
+                recognition.onresult = (event: any) => {
+                    const transcript = Array.from(event.results)
+                        .map((result: any) => result[0].transcript)
+                        .join('');
+                    setInput(transcript);
+                };
+
+                recognition.onend = () => {
+                    setIsListening(false);
+                };
+
+                recognition.onerror = (event: any) => {
+                    console.error('Speech recognition error:', event.error);
+                    setIsListening(false);
+                };
+
+                recognitionRef.current = recognition;
+            }
+
+            // Check TTS support
+            if ('speechSynthesis' in window) {
+                setSpeechSupported(true);
+                synthRef.current = window.speechSynthesis;
+            }
+        }
+    }, []);
+
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
 
-    // Build farmContext from real selected farm data
+    // ─── Voice Input (Mic) ────────────────────────────────────
+    const toggleListening = () => {
+        if (!recognitionRef.current) return;
+
+        if (isListening) {
+            recognitionRef.current.stop();
+            setIsListening(false);
+        } else {
+            setInput('');
+            recognitionRef.current.start();
+            setIsListening(true);
+        }
+    };
+
+    // ─── Voice Output (TTS) ───────────────────────────────────
+    const speakText = useCallback((text: string) => {
+        if (!synthRef.current || !speechSupported) return;
+
+        // Stop any current speech
+        synthRef.current.cancel();
+
+        // Clean markdown/emoji from spoken text
+        const cleanText = text
+            .replace(/[🙏👨‍🌾🌱💧⚠️✅❌🔄➤🎤🔊🔴]/g, '')
+            .replace(/\*\*/g, '')
+            .replace(/#{1,6}\s/g, '')
+            .replace(/•/g, '')
+            .trim();
+
+        const utterance = new SpeechSynthesisUtterance(cleanText);
+        const voices = synthRef.current.getVoices();
+
+        const hasHindi = /[\u0900-\u097F]/.test(cleanText);
+        let selectedVoice;
+
+        if (hasHindi) {
+            // Priority 1: Best Hindi voices
+            selectedVoice = voices.find(v => v.name.includes('Google हिन्दी') || v.name.includes('Microsoft Heera'));
+            // Priority 2: Any Hindi voice
+            if (!selectedVoice) selectedVoice = voices.find(v => v.lang.startsWith('hi'));
+            // Priority 3: Indian English fallback
+            if (!selectedVoice) selectedVoice = voices.find(v => v.lang === 'en-IN');
+        } else {
+            // English / Other languages
+            // Priority 1: Explicitly female voices
+            selectedVoice = voices.find(v => v.name.toLowerCase().includes('female'));
+
+            // Priority 2: Known female English voices
+            if (!selectedVoice) {
+                const femaleVoiceNames = [
+                    'Microsoft Zira', 'Samantha', 'Victoria', 'Karen', 'Moira', 'Tessa', 
+                    'Google UK English Female', 'Google US English', 'Microsoft Susan', 'Microsoft Anna'
+                ];
+                for (const name of femaleVoiceNames) {
+                    const found = voices.find(v => v.name.includes(name));
+                    if (found) { selectedVoice = found; break; }
+                }
+            }
+        }
+
+        // Final fallback chain if still no voice found
+        if (!selectedVoice) {
+            selectedVoice = voices.find(v => v.lang === 'en-IN') || 
+                            voices.find(v => v.lang.startsWith('en')) || 
+                            voices[0];
+        }
+
+        utterance.voice = selectedVoice || voices[0];
+        utterance.rate = hasHindi ? 0.85 : 0.92; // Slightly slower for Hindi to sound clearer
+        utterance.pitch = 1.15;   // Higher pitch = more feminine
+        utterance.volume = 1;
+        utterance.lang = selectedVoice?.lang || (hasHindi ? 'hi-IN' : 'en-US');
+
+        utterance.onstart = () => setIsSpeaking(true);
+        utterance.onend = () => setIsSpeaking(false);
+        utterance.onerror = () => setIsSpeaking(false);
+
+        currentUtteranceRef.current = utterance;
+        synthRef.current.speak(utterance);
+    }, [speechSupported]);
+
+    const stopSpeaking = () => {
+        synthRef.current?.cancel();
+        setIsSpeaking(false);
+    };
+
+    // Farm context
     const farmContext: FarmContext = {
         cropType: selectedFarm?.name || 'unknown',
         growthStage: 'Development',
@@ -33,13 +175,20 @@ export default function KrishiSahayak() {
         recentAlerts: []
     };
 
-    const sendMessage = async () => {
-        if (!input.trim()) return;
+    const sendMessage = async (messageText?: string) => {
+        const textToSend = messageText || input;
+        if (!textToSend.trim()) return;
+
+        // Stop listening if active
+        if (isListening) {
+            recognitionRef.current?.stop();
+            setIsListening(false);
+        }
 
         const userMessage: ChatMessage = {
             id: String(Date.now()),
             role: 'user',
-            content: input,
+            content: textToSend,
             timestamp: new Date(),
             context: farmContext
         };
@@ -53,23 +202,19 @@ export default function KrishiSahayak() {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    message: input,
+                    message: textToSend,
                     context: farmContext,
                     sessionId,
-                    farmId: selectedFarm?.id || null  // Pass farmId for RAG
+                    farmId: selectedFarm?.id || null
                 })
             });
 
-            console.log('📥 [Frontend] Response received:', response.status);
             const data = await response.json();
-            console.log('📦 [Frontend] Response data:', data);
 
             if (!response.ok) {
-                console.error('❌ [Frontend] API error:', data);
                 throw new Error(data.error || 'Failed to send message');
             }
 
-            console.log('✅ [Frontend] Bot response:', data.response?.substring(0, 100));
             const assistantMessage: ChatMessage = {
                 id: String(Date.now() + 1),
                 role: 'assistant',
@@ -78,15 +223,15 @@ export default function KrishiSahayak() {
             };
 
             setMessages(prev => [...prev, assistantMessage]);
+
+            // Auto-speak the response
+            speakText(data.response);
+
         } catch (error) {
-            console.error('❌ [Frontend] Chat error:', error);
-            if (error instanceof Error) {
-                console.error('   Error message:', error.message);
-            }
             const errorMessage: ChatMessage = {
                 id: String(Date.now() + 1),
                 role: 'assistant',
-                content: '🙏 Namaste! I am experiencing technical difficulties connecting to the AI service. Please check your internet connection and try again in a moment. If the problem persists, the Gemini API might be temporarily unavailable.',
+                content: '🙏 Sorry! AI service se connect nahi ho pa raha. Thodi der baad try karein.',
                 timestamp: new Date()
             };
             setMessages(prev => [...prev, errorMessage]);
@@ -96,22 +241,17 @@ export default function KrishiSahayak() {
     };
 
     const handleNewChat = async () => {
+        stopSpeaking();
         try {
-            // Reset conversation on backend
             await fetch('/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    sessionId,
-                    reset: true
-                })
+                body: JSON.stringify({ sessionId, reset: true })
             });
-
-            // Clear local messages
             setMessages([{
                 id: '1',
                 role: 'assistant',
-                content: '🙏 Namaste! I am Krishi Sahayak (कृषि सहायक), your AI farming assistant. How can I help you today with your crops?',
+                content: '🙏 Namaste! Main hoon Krishi Sahayak (कृषि सहायक), aapka AI farming assistant. Aap mujhse koi bhi sawaal pooch sakte hain — type karke ya 🎤 mic button se baat karke!',
                 timestamp: new Date()
             }]);
         } catch (error) {
@@ -119,14 +259,14 @@ export default function KrishiSahayak() {
         }
     };
 
-    // Quick suggestions
     const suggestions = [
-        'When should I irrigate?',
-        'My leaves are yellowing',
-        'Weather impact on crops',
-        'Best fertilizer timing'
+        'Meri farming ki condition kaisi hai?',
+        'Irrigation kab karni chahiye?',
+        'Patte peele kyon ho rahe hain?',
+        'Khad kab dalni chahiye?'
     ];
 
+    // ─── Floating Button ──────────────────────────────────────
     if (!isOpen) {
         return (
             <div
@@ -135,114 +275,135 @@ export default function KrishiSahayak() {
                     position: 'fixed',
                     bottom: '2rem',
                     right: '2rem',
-                    width: '60px',
-                    height: '60px',
+                    width: '64px',
+                    height: '64px',
                     borderRadius: '50%',
-                    background: 'var(--gradient-primary)',
+                    background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     cursor: 'pointer',
-                    boxShadow: '0 4px 12px rgba(16, 185, 129, 0.4)',
+                    boxShadow: '0 4px 20px rgba(16, 185, 129, 0.5)',
                     zIndex: 1000,
-                    transition: 'all 0.3s ease'
+                    transition: 'all 0.3s ease',
+                    fontSize: '1.8rem'
                 }}
                 onMouseEnter={(e) => {
                     e.currentTarget.style.transform = 'scale(1.1)';
-                    e.currentTarget.style.boxShadow = '0 6px 20px rgba(16, 185, 129, 0.6)';
+                    e.currentTarget.style.boxShadow = '0 8px 28px rgba(16, 185, 129, 0.7)';
                 }}
                 onMouseLeave={(e) => {
                     e.currentTarget.style.transform = 'scale(1)';
-                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.4)';
+                    e.currentTarget.style.boxShadow = '0 4px 20px rgba(16, 185, 129, 0.5)';
                 }}
             >
-                <img src="/assets/icons/chatbot-icon.png" alt="Krishi Sahayak" style={{ width: '40px', height: '40px' }} />
+                👨‍🌾
             </div>
         );
     }
 
+    // ─── Chat Window ──────────────────────────────────────────
     return (
         <div style={{
             position: 'fixed',
             bottom: '2rem',
             right: '2rem',
-            width: '400px',
-            height: '600px',
-            background: 'white',
-            borderRadius: '16px',
-            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.2)',
+            width: '420px',
+            height: '620px',
+            background: '#0f172a',
+            borderRadius: '20px',
+            boxShadow: '0 24px 80px rgba(0,0,0,0.5), 0 0 0 1px rgba(16,185,129,0.2)',
             display: 'flex',
             flexDirection: 'column',
             zIndex: 1000,
-            overflow: 'hidden'
+            overflow: 'hidden',
+            fontFamily: "'Inter', sans-serif"
         }}>
-            {/* Header */}
+
+            {/* ── Header ── */}
             <div style={{
-                background: 'var(--gradient-primary)',
-                padding: '1.25rem',
+                background: 'linear-gradient(135deg, #065f46 0%, #047857 50%, #059669 100%)',
+                padding: '1rem 1.25rem',
                 display: 'flex',
                 justifyContent: 'space-between',
-                alignItems: 'center'
+                alignItems: 'center',
+                borderBottom: '1px solid rgba(16,185,129,0.3)'
             }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                     <div style={{
-                        width: '40px',
-                        height: '40px',
+                        width: '44px', height: '44px',
                         borderRadius: '50%',
-                        background: 'rgba(255, 255, 255, 0.2)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '1.5rem'
+                        background: 'rgba(255,255,255,0.15)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '1.6rem',
+                        border: '2px solid rgba(255,255,255,0.2)'
                     }}>
                         👨‍🌾
                     </div>
                     <div>
-                        <h3 style={{ margin: 0, color: 'white', fontSize: '1.1rem' }}>
+                        <h3 style={{ margin: 0, color: 'white', fontSize: '1rem', fontWeight: 700 }}>
                             Krishi Sahayak
                         </h3>
-                        <p style={{ margin: 0, color: '#D1FAE5', fontSize: '0.75rem' }}>
-                            AI Farming Assistant
-                        </p>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <div style={{
+                                width: '7px', height: '7px', borderRadius: '50%',
+                                background: '#4ade80',
+                                boxShadow: '0 0 6px #4ade80',
+                                animation: 'pulse 2s infinite'
+                            }} />
+                            <p style={{ margin: 0, color: '#a7f3d0', fontSize: '0.72rem' }}>
+                                AI Farming Assistant • Voice Enabled
+                            </p>
+                        </div>
                     </div>
                 </div>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
+
+                <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                    {/* Stop Speaking */}
+                    {isSpeaking && (
+                        <button
+                            onClick={stopSpeaking}
+                            title="Bolna band karo"
+                            style={{
+                                background: 'rgba(239,68,68,0.3)',
+                                border: '1px solid rgba(239,68,68,0.5)',
+                                color: 'white', width: '32px', height: '32px',
+                                borderRadius: '50%', cursor: 'pointer',
+                                fontSize: '0.9rem', display: 'flex',
+                                alignItems: 'center', justifyContent: 'center'
+                            }}
+                        >
+                            🔇
+                        </button>
+                    )}
+                    {/* New Chat */}
                     <button
                         onClick={handleNewChat}
-                        title="Start new conversation"
+                        title="Nai baat shuru karo"
                         style={{
-                            background: 'rgba(255, 255, 255, 0.2)',
-                            border: 'none',
-                            color: 'white',
-                            width: '32px',
-                            height: '32px',
-                            borderRadius: '50%',
-                            cursor: 'pointer',
-                            fontSize: '1.1rem',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            transition: 'all 0.2s ease'
+                            background: 'rgba(255,255,255,0.15)',
+                            border: 'none', color: 'white',
+                            width: '32px', height: '32px',
+                            borderRadius: '50%', cursor: 'pointer',
+                            fontSize: '1rem', display: 'flex',
+                            alignItems: 'center', justifyContent: 'center',
+                            transition: 'all 0.2s'
                         }}
-                        onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.3)'}
-                        onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)'}
+                        onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.25)'}
+                        onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.15)'}
                     >
                         🔄
                     </button>
+                    {/* Close */}
                     <button
-                        onClick={() => setIsOpen(false)}
+                        onClick={() => { setIsOpen(false); stopSpeaking(); }}
                         style={{
-                            background: 'rgba(255, 255, 255, 0.2)',
-                            border: 'none',
-                            color: 'white',
-                            width: '32px',
-                            height: '32px',
-                            borderRadius: '50%',
-                            cursor: 'pointer',
-                            fontSize: '1.2rem',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center'
+                            background: 'rgba(255,255,255,0.15)',
+                            border: 'none', color: 'white',
+                            width: '32px', height: '32px',
+                            borderRadius: '50%', cursor: 'pointer',
+                            fontSize: '1.2rem', display: 'flex',
+                            alignItems: 'center', justifyContent: 'center'
                         }}
                     >
                         ×
@@ -250,66 +411,122 @@ export default function KrishiSahayak() {
                 </div>
             </div>
 
-            {/* Messages */}
+            {/* ── Messages ── */}
             <div style={{
                 flex: 1,
                 overflowY: 'auto',
                 padding: '1rem',
                 display: 'flex',
                 flexDirection: 'column',
-                gap: '1rem',
-                background: 'var(--color-background)'
+                gap: '0.75rem',
+                background: '#0f172a',
+                scrollbarWidth: 'thin',
+                scrollbarColor: '#1e293b transparent'
             }}>
                 {messages.map((msg) => (
                     <div
                         key={msg.id}
                         style={{
                             display: 'flex',
-                            justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start'
+                            justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                            gap: '0.5rem',
+                            alignItems: 'flex-end'
                         }}
                     >
+                        {msg.role === 'assistant' && (
+                            <div style={{
+                                width: '28px', height: '28px', borderRadius: '50%',
+                                background: 'linear-gradient(135deg, #059669, #10b981)',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                fontSize: '0.9rem', flexShrink: 0
+                            }}>
+                                🌱
+                            </div>
+                        )}
+
                         <div style={{
-                            maxWidth: '75%',
-                            padding: '0.75rem 1rem',
-                            borderRadius: msg.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                            maxWidth: '78%',
+                            padding: '0.7rem 1rem',
+                            borderRadius: msg.role === 'user'
+                                ? '18px 18px 4px 18px'
+                                : '18px 18px 18px 4px',
                             background: msg.role === 'user'
-                                ? 'var(--gradient-primary)'
-                                : 'white',
-                            color: msg.role === 'user' ? 'white' : 'var(--color-text-primary)',
-                            boxShadow: 'var(--shadow-sm)',
-                            fontSize: '0.9rem',
-                            lineHeight: 1.6
+                                ? 'linear-gradient(135deg, #059669, #10b981)'
+                                : '#1e293b',
+                            color: 'white',
+                            fontSize: '0.875rem',
+                            lineHeight: 1.65,
+                            boxShadow: msg.role === 'user'
+                                ? '0 2px 12px rgba(16,185,129,0.3)'
+                                : '0 2px 8px rgba(0,0,0,0.3)',
+                            border: msg.role === 'assistant'
+                                ? '1px solid rgba(16,185,129,0.15)'
+                                : 'none'
                         }}>
                             {msg.content}
                             <div style={{
-                                fontSize: '0.7rem',
-                                opacity: 0.7,
-                                marginTop: '0.25rem'
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                marginTop: '0.35rem'
                             }}>
-                                {new Date(msg.timestamp).toLocaleTimeString('en-US', {
-                                    hour: '2-digit',
-                                    minute: '2-digit'
-                                })}
+                                <span style={{ fontSize: '0.65rem', opacity: 0.5 }}>
+                                    {new Date(msg.timestamp).toLocaleTimeString('en-US', {
+                                        hour: '2-digit', minute: '2-digit'
+                                    })}
+                                </span>
+                                {/* Speak button on assistant messages */}
+                                {msg.role === 'assistant' && speechSupported && (
+                                    <button
+                                        onClick={() => speakText(msg.content)}
+                                        title="Sunao"
+                                        style={{
+                                            background: 'rgba(16,185,129,0.2)',
+                                            border: '1px solid rgba(16,185,129,0.3)',
+                                            color: '#4ade80',
+                                            borderRadius: '10px',
+                                            padding: '1px 6px',
+                                            fontSize: '0.65rem',
+                                            cursor: 'pointer',
+                                            display: 'flex', alignItems: 'center', gap: '3px'
+                                        }}
+                                    >
+                                        🔊 Sunao
+                                    </button>
+                                )}
                             </div>
                         </div>
                     </div>
                 ))}
 
+                {/* Loading */}
                 {loading && (
-                    <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+                    <div style={{ display: 'flex', justifyContent: 'flex-start', gap: '0.5rem', alignItems: 'flex-end' }}>
                         <div style={{
-                            padding: '0.75rem 1rem',
-                            borderRadius: '16px 16px 16px 4px',
-                            background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
-                            color: 'white',
-                            boxShadow: 'var(--shadow-sm)'
+                            width: '28px', height: '28px', borderRadius: '50%',
+                            background: 'linear-gradient(135deg, #059669, #10b981)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: '0.9rem'
                         }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                <div className="pulse" style={{ display: 'flex', gap: '0.25rem' }}>
-                                    <span>●</span><span>●</span><span>●</span>
-                                </div>
-                                <span style={{ fontSize: '0.85rem', opacity: 0.95 }}>
-                                    Krishi Sevak is thinking...
+                            🌱
+                        </div>
+                        <div style={{
+                            padding: '0.7rem 1rem',
+                            borderRadius: '18px 18px 18px 4px',
+                            background: '#1e293b',
+                            border: '1px solid rgba(16,185,129,0.2)',
+                            boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
+                        }}>
+                            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                                {[0, 1, 2].map(i => (
+                                    <div key={i} style={{
+                                        width: '6px', height: '6px', borderRadius: '50%',
+                                        background: '#10b981',
+                                        animation: `bounce 1.2s ${i * 0.2}s infinite`
+                                    }} />
+                                ))}
+                                <span style={{ fontSize: '0.8rem', color: '#94a3b8', marginLeft: '6px' }}>
+                                    Soch raha hoon...
                                 </span>
                             </div>
                         </div>
@@ -319,31 +536,33 @@ export default function KrishiSahayak() {
                 <div ref={messagesEndRef} />
             </div>
 
-            {/* Quick Suggestions */}
+            {/* ── Quick Suggestions ── */}
             {messages.length === 1 && (
                 <div style={{
-                    padding: '0.75rem 1rem',
+                    padding: '0.6rem 1rem',
                     display: 'flex',
-                    gap: '0.5rem',
+                    gap: '0.4rem',
                     flexWrap: 'wrap',
-                    borderTop: '1px solid #E5E7EB'
+                    borderTop: '1px solid rgba(255,255,255,0.06)',
+                    background: '#0f172a'
                 }}>
                     {suggestions.map((sug, i) => (
                         <button
                             key={i}
-                            onClick={() => setInput(sug)}
+                            onClick={() => sendMessage(sug)}
                             style={{
-                                padding: '0.5rem 0.75rem',
-                                background: 'var(--color-surface-elevated)',
-                                border: '1px solid var(--color-primary-light)',
+                                padding: '0.35rem 0.7rem',
+                                background: 'rgba(16,185,129,0.1)',
+                                border: '1px solid rgba(16,185,129,0.25)',
                                 borderRadius: '20px',
-                                fontSize: '0.75rem',
-                                color: 'var(--color-primary)',
+                                fontSize: '0.72rem',
+                                color: '#4ade80',
                                 cursor: 'pointer',
-                                transition: 'all 0.2s ease'
+                                transition: 'all 0.2s',
+                                whiteSpace: 'nowrap'
                             }}
-                            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(16, 185, 129, 0.1)'}
-                            onMouseLeave={(e) => e.currentTarget.style.background = 'var(--color-surface-elevated)'}
+                            onMouseEnter={e => e.currentTarget.style.background = 'rgba(16,185,129,0.25)'}
+                            onMouseLeave={e => e.currentTarget.style.background = 'rgba(16,185,129,0.1)'}
                         >
                             {sug}
                         </button>
@@ -351,41 +570,118 @@ export default function KrishiSahayak() {
                 </div>
             )}
 
-            {/* Input */}
+            {/* ── Input Bar ── */}
             <div style={{
-                padding: '1rem',
-                borderTop: '1px solid #E5E7EB',
-                background: 'white'
+                padding: '0.85rem 1rem',
+                borderTop: '1px solid rgba(255,255,255,0.06)',
+                background: '#0f172a',
+                display: 'flex',
+                gap: '0.5rem',
+                alignItems: 'center'
             }}>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <input
-                        type="text"
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
-                        placeholder="Ask me anything about your crops..."
-                        style={{
-                            flex: 1,
-                            padding: '0.75rem',
-                            border: '2px solid var(--color-primary-light)',
-                            borderRadius: '8px',
-                            fontSize: '0.9rem'
-                        }}
-                    />
+                {/* Mic Button */}
+                {voiceSupported && (
                     <button
-                        onClick={sendMessage}
-                        disabled={!input.trim() || loading}
-                        className="btn-primary"
+                        onClick={toggleListening}
+                        title={isListening ? 'Sunna band karo' : 'Mic se bolo'}
                         style={{
-                            padding: '0.75rem 1.25rem',
-                            fontSize: '1.2rem',
-                            opacity: !input.trim() || loading ? 0.5 : 1
+                            width: '42px',
+                            height: '42px',
+                            borderRadius: '50%',
+                            border: isListening
+                                ? '2px solid #ef4444'
+                                : '2px solid rgba(16,185,129,0.4)',
+                            background: isListening
+                                ? 'rgba(239,68,68,0.2)'
+                                : 'rgba(16,185,129,0.1)',
+                            color: isListening ? '#f87171' : '#4ade80',
+                            cursor: 'pointer',
+                            fontSize: '1.1rem',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0,
+                            transition: 'all 0.3s',
+                            boxShadow: isListening ? '0 0 12px rgba(239,68,68,0.4)' : 'none',
+                            animation: isListening ? 'micPulse 1s infinite' : 'none'
                         }}
                     >
-                        ➤
+                        {isListening ? '🔴' : '🎤'}
                     </button>
-                </div>
+                )}
+
+                {/* Text Input */}
+                <input
+                    type="text"
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+                    placeholder={isListening ? '🎤 Bol raha hoon...' : 'Kuch bhi poochho...'}
+                    style={{
+                        flex: 1,
+                        padding: '0.65rem 1rem',
+                        background: '#1e293b',
+                        border: isListening
+                            ? '2px solid rgba(239,68,68,0.5)'
+                            : '2px solid rgba(16,185,129,0.2)',
+                        borderRadius: '12px',
+                        fontSize: '0.875rem',
+                        color: 'white',
+                        outline: 'none',
+                        transition: 'border-color 0.3s'
+                    }}
+                    onFocus={e => {
+                        if (!isListening) e.target.style.borderColor = 'rgba(16,185,129,0.6)';
+                    }}
+                    onBlur={e => {
+                        if (!isListening) e.target.style.borderColor = 'rgba(16,185,129,0.2)';
+                    }}
+                />
+
+                {/* Send Button */}
+                <button
+                    onClick={() => sendMessage()}
+                    disabled={!input.trim() || loading}
+                    style={{
+                        width: '42px',
+                        height: '42px',
+                        borderRadius: '50%',
+                        border: 'none',
+                        background: (!input.trim() || loading)
+                            ? 'rgba(16,185,129,0.2)'
+                            : 'linear-gradient(135deg, #059669, #10b981)',
+                        color: 'white',
+                        cursor: (!input.trim() || loading) ? 'not-allowed' : 'pointer',
+                        fontSize: '1.1rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        flexShrink: 0,
+                        transition: 'all 0.3s',
+                        boxShadow: (!input.trim() || loading)
+                            ? 'none'
+                            : '0 2px 12px rgba(16,185,129,0.4)'
+                    }}
+                >
+                    ➤
+                </button>
             </div>
+
+            {/* CSS Animations */}
+            <style>{`
+                @keyframes bounce {
+                    0%, 60%, 100% { transform: translateY(0); }
+                    30% { transform: translateY(-6px); }
+                }
+                @keyframes micPulse {
+                    0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); }
+                    50% { box-shadow: 0 0 0 8px rgba(239,68,68,0); }
+                }
+                @keyframes pulse {
+                    0%, 100% { opacity: 1; }
+                    50% { opacity: 0.4; }
+                }
+            `}</style>
         </div>
     );
 }
