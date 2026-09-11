@@ -503,7 +503,7 @@ export default function HomePage() {
                             <p style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>
                                 📍 Uttar Pradesh, India<br />
                                 📧 info@protominds.com<br />
-                                📱 +91 9760-434089
+                                📱 +91 7055-335677
                             </p>
                         </div>
                     </div>

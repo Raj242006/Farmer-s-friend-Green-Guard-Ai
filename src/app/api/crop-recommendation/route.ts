@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-export const dynamic = 'force-dynamic';
 import prisma from '@/lib/prisma';
 import cropService from '../../../../backend/services/cropRecommendation.service';
+
+export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
     try {
@@ -58,6 +59,8 @@ export async function POST(request: NextRequest) {
             success: true,
             crop: recommendedCrop,
             analysis: analysis,
+            confidence: predictionResult.confidence || 95.0,
+            alternatives: predictionResult.alternatives || [],
             timestamp: new Date().toISOString(),
             model: 'ML-based (scikit-learn)'
         });

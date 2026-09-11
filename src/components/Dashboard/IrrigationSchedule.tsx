@@ -395,7 +395,7 @@ export default function IrrigationSchedule() {
                         <div style={{ fontSize: '0.875rem', opacity: 0.8 }}>Calculated Irrigation Interval</div>
                     </div>
                     <div style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--color-primary)' }}>
-                        Every {calculatedInterval} days
+                        Every {Math.round(parseFloat(calculatedInterval))} {Math.round(parseFloat(calculatedInterval)) === 1 ? 'day' : 'days'}
                     </div>
                     <div style={{ fontSize: '0.75rem', opacity: 0.6, marginTop: '0.25rem' }}>
                         Based on FAO-56 soil water balance from Water Calculator

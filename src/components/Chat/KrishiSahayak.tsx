@@ -475,23 +475,28 @@ export default function KrishiSahayak() {
                                         hour: '2-digit', minute: '2-digit'
                                     })}
                                 </span>
-                                {/* Speak button on assistant messages */}
+                                {/* Speak / Stop button on assistant messages */}
                                 {msg.role === 'assistant' && speechSupported && (
                                     <button
-                                        onClick={() => speakText(msg.content)}
-                                        title="Sunao"
+                                        onClick={() => isSpeaking ? stopSpeaking() : speakText(msg.content)}
+                                        title={isSpeaking ? 'Click to Stop' : 'Listen'}
                                         style={{
-                                            background: 'rgba(16,185,129,0.2)',
-                                            border: '1px solid rgba(16,185,129,0.3)',
-                                            color: '#4ade80',
+                                            background: isSpeaking
+                                                ? 'rgba(239,68,68,0.2)'
+                                                : 'rgba(16,185,129,0.2)',
+                                            border: isSpeaking
+                                                ? '1px solid rgba(239,68,68,0.4)'
+                                                : '1px solid rgba(16,185,129,0.3)',
+                                            color: isSpeaking ? '#f87171' : '#4ade80',
                                             borderRadius: '10px',
                                             padding: '1px 6px',
                                             fontSize: '0.65rem',
                                             cursor: 'pointer',
-                                            display: 'flex', alignItems: 'center', gap: '3px'
+                                            display: 'flex', alignItems: 'center', gap: '3px',
+                                            transition: 'all 0.2s'
                                         }}
                                     >
-                                        🔊 Sunao
+                                        {isSpeaking ? '🔇 Stop' : '🔊 Listen'}
                                     </button>
                                 )}
                             </div>

@@ -185,6 +185,15 @@ export default function DashboardClient() {
         }
     }, [lat, lon]);
 
+    // Auto-refresh simulation every 5 minutes
+    useEffect(() => {
+        if (!lat || !lon) return;
+        const interval = setInterval(() => {
+            fetchSimulationData();
+        }, 5 * 60 * 1000);
+        return () => clearInterval(interval);
+    }, [lat, lon]);
+
     const fetchSimulationData = async () => {
         try {
             const response = await fetch(
@@ -368,6 +377,13 @@ export default function DashboardClient() {
                                         irrigationRec?.isNeeded && irrigationRec?.daysUntilStress !== undefined
                                             ? irrigationRec.daysUntilStress * 24
                                             : irrigationRec?.isNeeded ? 6.75 : null
+                                    }
+                                    confidence={irrigationRec?.confidence}
+                                    farmId={selectedFarm?.id}
+                                    recommendedDuration={
+                                        irrigationRec?.amount
+                                            ? Math.round(irrigationRec.amount) // amount in mm ≈ minutes at 1mm/min drip rate
+                                            : undefined
                                     }
                                 />
                             </div>

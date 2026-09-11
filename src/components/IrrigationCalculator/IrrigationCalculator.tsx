@@ -239,7 +239,7 @@ export default function IrrigationCalculator() {
 
         // Save irrigation interval to localStorage for Dashboard integration
         if (interval > 0) {
-            localStorage.setItem('calculatedIrrigationInterval', interval.toFixed(1));
+            localStorage.setItem('calculatedIrrigationInterval', Math.round(interval).toString());
             localStorage.setItem('calculationTimestamp', new Date().toISOString());
         }
 
@@ -725,7 +725,7 @@ export default function IrrigationCalculator() {
                                 ⏱️ Irrigation Interval
                             </h3>
                             <p style={{ fontSize: '1.75rem', fontWeight: 600, color: 'var(--color-text)' }}>
-                                Irrigation required every {irrigationInterval.toFixed(1)} days
+                                Irrigation required every {Math.round(irrigationInterval)} {Math.round(irrigationInterval) === 1 ? 'day' : 'days'}
                             </p>
                             <p style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)', marginTop: '0.5rem' }}>
                                 Based on soil water balance and crop depletion factor
