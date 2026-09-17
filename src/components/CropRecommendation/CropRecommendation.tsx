@@ -77,45 +77,55 @@ export default function CropRecommendation() {
         }
     }, [selectedFarm]);
 
-    // Fetch weather data for initial pre-fill
+    // Fetch weather data whenever district changes
     useEffect(() => {
+        if (!state || !district) return;
+
         const fetchWeather = async () => {
             setLoadingWeather(true);
+            console.log(`🌦️ Fetching weather for district: ${district}`);
             try {
-                // RESTORED: Prioritize AgroMonitoring if farm has polygon
-                if (selectedFarm?.id && selectedFarm.polygonId) {
-                    const res = await fetch(`/api/agro?farmId=${selectedFarm.id}&type=weather`);
-                    if (res.ok) {
-                        const data = await res.json();
-                        const weather = data.data;
-                        if (weather) {
-                            setTemperature(((weather.main?.temp ?? 273.15) - 273.15).toFixed(1));
-                            setHumidity((weather.main?.humidity ?? 80).toString());
-                            setRainfall((weather.rain?.['1h'] || weather.rain?.['3h'] || 100).toFixed(1));
-                            return; // Success
-                        }
+                // ALWAYS fetch by district name first — district selection takes priority
+                // over AgroMonitoring (which always returns the farm's fixed location)
+                const res = await fetch(`/api/weather?district=${encodeURIComponent(district)}`, {
+                    cache: 'no-store'
+                });
+                console.log(`📡 Response status: ${res.status}`);
+
+                if (res.ok) {
+                    const data = await res.json();
+                    console.log('📡 Weather API response:', data.current);
+                    if (data.current) {
+                        const temp = data.current.temperature;
+                        const hum  = data.current.humidity;
+                        const rain = data.current.precipitation;
+                        setTemperature((temp ?? 25).toFixed(1));
+                        setHumidity((hum ?? 80).toString());
+                        setRainfall((rain ?? 0).toFixed(1));
+                        console.log(`✅ Weather set → Temp: ${temp}°C, Humidity: ${hum}%, Rain: ${rain}mm`);
+                        return;
                     }
                 }
 
-                // Fallback: Using manual location or when farm has no polygonId
-                if (state && district) {
-                    const districts = getDistrictsByState(state);
-                    const districtData = districts.find(d => d.name === district);
-                    if (districtData) {
-                        const res = await fetch(`/api/unified-weather?lat=${districtData.latitude}&lon=${districtData.longitude}`);
-                        if (res.ok) {
-                            const data = await res.json();
-                            const weather = data.data;
-                            if (weather) {
-                                setTemperature(weather.temp.toFixed(1));
-                                setHumidity((weather.humidity ?? 80).toString());
-                                setRainfall((weather.rain || 100).toFixed(1));
-                            }
+                console.warn(`⚠️ District weather failed (${res.status}), trying AgroMonitoring fallback`);
+
+                // Fallback ONLY: AgroMonitoring if district fetch failed and farm has polygon
+                if (selectedFarm?.id && selectedFarm.polygonId) {
+                    const agroRes = await fetch(`/api/agro?farmId=${selectedFarm.id}&type=weather`);
+                    if (agroRes.ok) {
+                        const data = await agroRes.json();
+                        const weather = data.data ?? data;
+                        if (weather?.main) {
+                            const tempC = (weather.main.temp ?? 273.15) - 273.15;
+                            setTemperature(tempC.toFixed(1));
+                            setHumidity((weather.main.humidity ?? 80).toString());
+                            setRainfall(((weather.rain?.['1h'] ?? weather.rain?.['3h']) ?? 0).toFixed(1));
+                            console.log('✅ AgroMonitoring fallback applied');
                         }
                     }
                 }
             } catch (error) {
-                console.error('Failed to fetch weather:', error);
+                console.error('❌ Failed to fetch weather for district:', district, error);
             } finally {
                 setLoadingWeather(false);
             }
@@ -123,6 +133,7 @@ export default function CropRecommendation() {
 
         fetchWeather();
     }, [state, district, selectedFarm]);
+
 
     const handleAnalyze = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -175,11 +186,9 @@ export default function CropRecommendation() {
             </Link>
 
             <header className={styles.header}>
-                <div className={styles.headerIcon}>🧠</div>
-                <h1>AI Crop Recommendation</h1>
-                <p className={styles.subtitle}>
-                    Analyzing <b>{selectedFarm?.name || 'your farm'}</b> ({selectedFarm?.location || 'Manual Location'})
-                </p>
+                <div className={styles.headerIcon}>🌾</div>
+                <h1>Real Data Based Crop Recommendation</h1>
+
                 <div style={{
                     marginTop: '0.5rem',
                     display: 'inline-block',
@@ -190,7 +199,7 @@ export default function CropRecommendation() {
                     color: '#10B981',
                     fontWeight: 600
                 }}>
-                    ✨ Production-Ready ML System
+                    📡 Live Weather & Soil Data
                 </div>
             </header>
 
@@ -198,6 +207,12 @@ export default function CropRecommendation() {
                 <form onSubmit={handleAnalyze} className={styles.calculatorForm}>
                     <div className={styles.sectionHeader}>
                         <h3>📍 Location & Environment</h3>
+                        {loadingWeather && (
+                            <p style={{ fontSize: '0.78rem', color: '#4ade80', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span style={{ display: 'inline-block', width: '10px', height: '10px', border: '2px solid #4ade80', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                                Fetching live weather for {district}...
+                            </p>
+                        )}
                     </div>
 
                     <div className={styles.formRow}>
@@ -230,35 +245,41 @@ export default function CropRecommendation() {
 
                     <div className={styles.formRow}>
                         <div className={styles.formGroup}>
-                            <label className={styles.formLabel}>🌡️ Temp (°C)</label>
+                            <label className={styles.formLabel}>🌡️ Temp (°C) {loadingWeather && <span style={{ color: '#4ade80', fontSize: '0.7rem' }}>●</span>}</label>
                             <input
                                 type="number"
                                 step="0.1"
                                 className={styles.formInput}
-                                value={temperature}
+                                value={loadingWeather ? '' : temperature}
+                                placeholder={loadingWeather ? 'Loading...' : ''}
                                 onChange={(e) => setTemperature(e.target.value)}
+                                disabled={loadingWeather}
                                 required
                             />
                         </div>
                         <div className={styles.formGroup}>
-                            <label className={styles.formLabel}>💧 Humidity (%)</label>
+                            <label className={styles.formLabel}>💧 Humidity (%) {loadingWeather && <span style={{ color: '#4ade80', fontSize: '0.7rem' }}>●</span>}</label>
                             <input
                                 type="number"
                                 step="0.1"
                                 className={styles.formInput}
-                                value={humidity}
+                                value={loadingWeather ? '' : humidity}
+                                placeholder={loadingWeather ? 'Loading...' : ''}
                                 onChange={(e) => setHumidity(e.target.value)}
+                                disabled={loadingWeather}
                                 required
                             />
                         </div>
                         <div className={styles.formGroup}>
-                            <label className={styles.formLabel}>🌧️ Rainfall (mm)</label>
+                            <label className={styles.formLabel}>🌧️ Rainfall (mm) {loadingWeather && <span style={{ color: '#4ade80', fontSize: '0.7rem' }}>●</span>}</label>
                             <input
                                 type="number"
                                 step="0.1"
                                 className={styles.formInput}
-                                value={rainfall}
+                                value={loadingWeather ? '' : rainfall}
+                                placeholder={loadingWeather ? 'Loading...' : ''}
                                 onChange={(e) => setRainfall(e.target.value)}
+                                disabled={loadingWeather}
                                 required
                             />
                         </div>

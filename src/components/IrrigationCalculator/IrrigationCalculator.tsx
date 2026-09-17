@@ -113,7 +113,8 @@ export default function IrrigationCalculator() {
         setWeatherLoading(true);
         try {
             const response = await fetch(
-                `/api/weather?district=${encodeURIComponent(district)}`
+                `/api/weather?district=${encodeURIComponent(district)}`,
+                { cache: 'no-store' }
             );
             const data = await response.json();
 
@@ -124,7 +125,7 @@ export default function IrrigationCalculator() {
                 setHumidity((data.current.humidity || 60).toString());
                 setWindSpeed((data.current.windSpeed || 2).toFixed(1));
                 setSunshineHours('8'); // Default, can be enhanced
-                setRainfall('0'); // Current rainfall, can be enhanced with forecast
+                setRainfall(((data.current.precipitation ?? 0)).toFixed(1)); // Actual rainfall from weather API
             }
         } catch (error) {
             console.error('Failed to fetch weather data:', error);

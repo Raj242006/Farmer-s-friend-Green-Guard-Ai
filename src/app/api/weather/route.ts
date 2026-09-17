@@ -16,7 +16,18 @@ export async function GET(request: NextRequest) {
             console.log("District:", district);
 
             try {
-                const { lat, lon } = await WeatherService.geocodeLocation(district);
+                // Add ", India" hint for better accuracy with Indian district names
+                const coords = await WeatherService.geocodeLocation(`${district}, India`);
+
+                if (!coords) {
+                    console.error("❌ Geocoding returned null for:", district);
+                    return NextResponse.json(
+                        { error: `Location "${district}" not found. Please check the district name.` },
+                        { status: 404 }
+                    );
+                }
+
+                const { lat, lon } = coords;
 
                 console.log("✅ Geocoded Lat:", lat);
                 console.log("✅ Geocoded Lon:", lon);
@@ -38,13 +49,10 @@ export async function GET(request: NextRequest) {
                 console.error("❌ Geocoding failed:", geocodeError);
                 console.log("━━━━━━━━━━━━━━━━━━━━━━━");
 
-                if (geocodeError instanceof Error && geocodeError.message.includes('not found')) {
-                    return NextResponse.json(
-                        { error: `Location "${district}" not found. Please check the district name.` },
-                        { status: 404 }
-                    );
-                }
-                throw geocodeError;
+                return NextResponse.json(
+                    { error: `Failed to geocode location: ${district}` },
+                    { status: 500 }
+                );
             }
         }
 
