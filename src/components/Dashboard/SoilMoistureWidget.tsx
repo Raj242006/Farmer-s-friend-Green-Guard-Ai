@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 
 interface SoilMoistureWidgetProps {
@@ -11,6 +12,38 @@ interface SoilMoistureWidgetProps {
     stressAnalysis?: any;  // Stress data
 }
 
+function useLiveSoilMoisture() {
+    const [liveMoisture, setLiveMoisture] = useState<number | null>(null);
+
+    useEffect(() => {
+        const fetchMoisture = async () => {
+            try {
+                const response = await fetch('/api/iot/soil', {
+                    cache: 'no-store'
+                });
+
+                if (!response.ok) return;
+
+                const data = await response.json();
+
+                if (typeof data.moisture === 'number') {
+                    setLiveMoisture(data.moisture);
+                }
+            } catch (error) {
+                console.error('Live soil moisture error:', error);
+            }
+        };
+
+        fetchMoisture();
+
+        const interval = setInterval(fetchMoisture, 3000);
+
+        return () => clearInterval(interval);
+    }, []);
+
+    return liveMoisture;
+}
+
 export default function SoilMoistureWidget({
     currentMoisture,
     fieldCapacity = 70,
@@ -19,6 +52,8 @@ export default function SoilMoistureWidget({
     predictions,
     stressAnalysis
 }: SoilMoistureWidgetProps) {
+    const liveMoisture = useLiveSoilMoisture();
+    const displayedMoisture = liveMoisture ?? currentMoisture;
     const getTrendEmoji = () => {
         if (trend === 'up') return '📈';
         if (trend === 'down') return '📉';
@@ -26,20 +61,20 @@ export default function SoilMoistureWidget({
     };
 
     const getStatusColor = () => {
-        if (currentMoisture < 30) return '#EF4444';
-        if (currentMoisture < 40) return '#F97316';
-        if (currentMoisture > 65) return '#3B82F6';
+        if (displayedMoisture < 30) return '#EF4444';
+        if (displayedMoisture < 40) return '#F97316';
+        if (displayedMoisture > 65) return '#3B82F6';
         return '#10B981';
     };
 
     const getStatusText = () => {
-        if (currentMoisture < 30) return 'Critical';
-        if (currentMoisture < 40) return 'Low';
-        if (currentMoisture > 65) return 'High';
+        if (displayedMoisture < 30) return 'Critical';
+        if (displayedMoisture < 40) return 'Low';
+        if (displayedMoisture > 65) return 'High';
         return 'Optimal';
     };
 
-    const percentage = ((currentMoisture - wiltingPoint) / (fieldCapacity - wiltingPoint)) * 100;
+    const percentage = ((displayedMoisture - wiltingPoint) / (fieldCapacity - wiltingPoint)) * 100;
     const clampedPercentage = Math.max(0, Math.min(100, percentage));
 
     const getStressRGB = (status: string) => {
@@ -77,7 +112,7 @@ export default function SoilMoistureWidget({
                         lineHeight: 1
                     }}
                 >
-                    {currentMoisture.toFixed(1)}%
+                    {displayedMoisture.toFixed(1)}%
                 </motion.div>
                 <div style={{
                     display: 'flex',

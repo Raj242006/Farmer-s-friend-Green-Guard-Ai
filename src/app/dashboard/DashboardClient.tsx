@@ -149,6 +149,37 @@ export default function DashboardClient() {
 
     // Append new moisture reading to rolling history whenever soilMoisture updates
     const soilMoistureVal = farmData.soilMoisture ?? simulationData?.predicted?.[0]?.moisture ?? null;
+    // Live ESP8266 soil moisture
+const [liveSoilMoisture, setLiveSoilMoisture] = useState<number | null>(null);
+
+useEffect(() => {
+    const fetchLiveSoilMoisture = async () => {
+        try {
+            const response = await fetch('/api/iot/soil', {
+                cache: 'no-store'
+            });
+
+            if (!response.ok) return;
+
+            const data = await response.json();
+
+            if (typeof data.moisture === 'number') {
+                setLiveSoilMoisture(data.moisture);
+            }
+        } catch (error) {
+            console.error('Live soil moisture error:', error);
+        }
+    };
+
+    fetchLiveSoilMoisture();
+
+    const interval = setInterval(fetchLiveSoilMoisture, 3000);
+
+    return () => clearInterval(interval);
+}, []);
+
+const displaySoilMoisture =
+    liveSoilMoisture ?? soilMoistureVal;
     useEffect(() => {
         if (soilMoistureVal !== null) {
             const now = new Date();
@@ -364,12 +395,12 @@ export default function DashboardClient() {
                             {/* ── Prediction Row: Live Gauge + Irrigation Decision ── */}
                             <div className={styles.predictionRow}>
                                 <LivePredictionGauge
-                                    moisture={typeof soilMoistureVal === 'number' ? soilMoistureVal : 0}
+                                    moisture={typeof displaySoilMoisture === 'number' ? displaySoilMoisture : 0}
                                     ndvi={farmData.ndvi}
                                     temp={weatherTemp}
                                     irrigationNeeded={!!irrigationRec?.isNeeded}
                                     moistureHistory={moistureHistory}
-                                    sensorConnected={false}
+                                    sensorConnected={liveSoilMoisture !== null}
                                 />
                                 <IrrigationDecisionPanel
                                     irrigationNeeded={!!irrigationRec?.isNeeded}
@@ -415,7 +446,7 @@ export default function DashboardClient() {
                             <div className={styles.dashboardGrid}>
                                 <div className={styles.gridItem} style={{ gridColumn: 'span 4' }}>
                                     <SoilMoistureWidget
-                                        currentMoisture={soilMoistureVal || 42}
+                                        currentMoisture={displaySoilMoisture ?? 42}
                                         fieldCapacity={simulationData?.fieldParameters?.fieldCapacity || 70}
                                         wiltingPoint={simulationData?.fieldParameters?.wiltingPoint || 20}
                                         trend={simulationData?.predicted?.length >= 2
